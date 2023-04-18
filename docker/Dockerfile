@@ -8,5 +8,6 @@ ENV HISTFILE=/root/.bash_history
 
 RUN apt update -y
 RUN apt install python3-pip python3-matplotlib python3-pillow -y
+RUN apt install python3-opencv -y
 
 WORKDIR /project

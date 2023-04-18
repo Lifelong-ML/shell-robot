@@ -19,3 +19,4 @@ job_dir/
 .pl_auto_save.ckpt
 **.zip
 **.bag
+*.pkl
