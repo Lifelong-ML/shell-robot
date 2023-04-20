@@ -154,7 +154,7 @@ class LaserScan():
         res_grid = grid / grid.sum(axis=0)
         res_grid = res_grid.transpose(1, 2, 0)
 
-        return res_grid
+        return res_grid.astype(np.float32)
 
 
 class MapWrapper():
@@ -204,19 +204,6 @@ class MapWrapper():
         modified_cells[map_points[:, 0], map_points[:, 1]] = 5
         return MapWrapper(modified_cells, self.origin, self.resolution)
 
-    def extract_region(self, pose: SE2) -> np.ndarray:
-        img = Image.fromarray(self.cells)
-
-        pose_center = pose.center()
-        map_center = self._world_to_map(pose_center)
-
-        img = img.rotate(-pose.theta * 180 / np.pi,
-                         expand=True,
-                         center=tuple(map_center))
-        img = img.crop((map_center[0] - 100, map_center[1] - 100,
-                        map_center[0] + 100, map_center[1] + 100))
-        return np.array(img)
-
     def extract_region(self,
                        global_pose: SE2,
                        robot_frame_size: List[int] = ROBOT_FRAME_SIZE,
@@ -232,10 +219,10 @@ class MapWrapper():
                     (robot_frame_size[0], robot_frame_size[1]), robot_angle)
             box = cv2.boxPoints(rect).astype(np.int0)
             cv2.drawContours(ground_truth_occ_map, [box], 0, (255, 0, 0), 3)
-        # Unknown space is 0, free space is 1, occupied space is 2
+        # Unknown space is 0, free space is 2, occupied space is 1.
         label_map = np.zeros_like(ground_truth_occ_map)
-        label_map[ground_truth_occ_map == 1] = 1
-        label_map[ground_truth_occ_map == 2] = 2
+        label_map[ground_truth_occ_map == 1] = 2
+        label_map[ground_truth_occ_map == 2] = 1
         label_map = label_map.astype(np.uint8)
 
         padding_size = int(np.sqrt(2) * max(robot_frame_size))

@@ -1,6 +1,6 @@
 import sys
 # Add . to path so we can import from shared_structs
-sys.path.append('raw_data/')
+sys.path.append('data_preprocessing/')
 
 import argparse
 import numpy as np
@@ -20,10 +20,16 @@ from shared_structs.data_structs import SE2, LaserScan, MapWrapper, ROBOT_FRAME_
 
 from functools import partial
 
-# Get path to data from command line
 parser = argparse.ArgumentParser()
-parser.add_argument('data_path', type=Path, help='Data path.')
+parser.add_argument('raw_input_path', type=Path, help='Data path.')
+parser.add_argument('output_path', type=Path, help='Output path.')
 args = parser.parse_args()
+
+input_path = args.raw_input_path
+output_path = args.output_path
+
+assert input_path.exists(), f'Input path {input_path} does not exist.'
+output_path.mkdir(parents=True, exist_ok=True)
 
 
 def load_pickle(path: Path):
@@ -31,6 +37,13 @@ def load_pickle(path: Path):
     assert path.exists(), f'Path {path} does not exist.'
     with open(path, 'rb') as f:
         return pickle.load(f, encoding="latin1")
+
+
+def save_pickle(path: Path, obj):
+    path = Path(path)
+    print(f'Saving {path}...')
+    with open(path, 'wb') as f:
+        pickle.dump(obj, f)
 
 
 class SequenceDir():
@@ -83,20 +96,17 @@ class SequenceDir():
 
     def __getitem__(self, index) -> Tuple[LaserScan, SE2]:
         laser_scan, pose = self.sequence[index]
-        return laser_scan, pose
+        ego_grid_occ = laser_scan.ego_occupancy(self.map.resolution)
+        ground_truth_label = self.map.extract_region(pose)
+        return ego_grid_occ, ground_truth_label
 
     def _visualize_input_outputs(self):
 
         for idx in range(len(self)):
-            laser_scan, pose = self[idx]
-            ego_grid_occ = laser_scan.ego_occupancy(self.map.resolution)
-            print("ego_grid_occ.shape:", ego_grid_occ.shape)
-            print(ego_grid_occ[70, 100])
-            ground_truth_label = self.map.extract_region(pose)
+            ego_grid_occ, ground_truth_label = self[idx]
 
             fig, ax = plt.subplots(2, 1, figsize=(5, 10))
             ax[0].imshow(ego_grid_occ, norm=None)
-            # ax[1].imshow(np.flip(ground_truth_label, axis=1))
             fig.colorbar(ax[1].imshow(np.flip(ground_truth_label, axis=1)))
             plt.show()
 
@@ -188,6 +198,37 @@ class SequenceDir():
 
 
 # Load data
-data_dir = SequenceDir(args.data_path)
-# Visualize the map
-data_dir._visualize_input_outputs()
+data_dir = SequenceDir(input_path)
+
+for idx in range(len(data_dir)):
+    input, target = data_dir[idx]
+    # Check shapes are the same
+    assert input.ndim == 3, \
+        f"Input shape {input.shape} does not have 3 dimensions"
+    assert target.ndim == 2, \
+        f"Target shape {target.shape} does not have 2 dimensions"
+
+    assert input.shape[:2] == target.shape, \
+        f"Input shape {input.shape[:2]} does not match target shape {target.shape[:2]}"
+    assert input.shape[2] == 3, \
+        f"Input shape {input.shape} does not have 3 channels"
+
+
+    assert input.dtype == np.float32, \
+        f"Input dtype {input.dtype} is not float32"
+    assert target.dtype == np.uint8, \
+        f"Target dtype {target.dtype} is not uint8"
+    
+    # Plot the input and target using matplotlib
+    # fig, ax = plt.subplots(2, 1, figsize=(5, 10))
+    # ax[0].imshow(input)
+    # fig.colorbar(ax[1].imshow(target))
+    # plt.show()
+
+
+    save_pickle(output_path / f"input_target_{idx:06d}.pkl", {
+        'input': input,
+        'target': target
+    })
+
+print("Done")

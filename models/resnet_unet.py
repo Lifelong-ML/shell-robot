@@ -44,8 +44,7 @@ class ResNetUNet(nn.Module):
         self.conv_last = nn.Conv2d(64, n_class_out, 1)
 
     def forward(self, input):
-        B, T, C, cH, cW = input.shape
-        input = input.view(B*T,C,cH,cW)
+        assert input.ndim == 4, "Input must have 4 dimensions (B, C, H, W)"
 
         x_original = self.conv_original_size0(input)
         x_original = self.conv_original_size1(x_original)
