@@ -25,9 +25,8 @@ class SerializableLaserScan:
 
     @property
     def angles(self):
-        return (
-            np.arange(0, len(self.ranges)) * self.angle_increment +
-            self.min_angle)
+        return (np.arange(0, len(self.ranges)) * self.angle_increment +
+                self.min_angle)
 
     def to_points(self) -> np.ndarray:
         ranges = np.array(self.ranges)
@@ -40,7 +39,7 @@ class SerializableLaserScan:
 
         return -points
 
-    def to_global(self, pose, map) -> np.ndarray:
+    def to_global(self, pose, map=None) -> np.ndarray:
         points = self.to_points()
 
         # Rotate the points
@@ -52,5 +51,6 @@ class SerializableLaserScan:
         points = np.matmul(points, rotation_matrix)
         # Translate the points
         points += pose.center()
-        points /= map.resolution
+        if map is not None:
+            points /= map.resolution
         return points
