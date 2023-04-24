@@ -3,7 +3,7 @@ from pathlib import Path
 import numpy as np
 import matplotlib.pyplot as plt
 from typing import Optional, Tuple, List
-from PIL import Image
+from PIL import Image, ImageDraw
 import copy
 import math
 import cv2
@@ -41,13 +41,14 @@ class LaserScan():
         self.ranges = ranges
         self.angles = angles
 
-    def to_points(self) -> np.ndarray:
+    def to_points(self, points_min=None, points_max=None) -> np.ndarray:
         points = np.zeros((len(self.ranges), 2))
         points[:, 0] = self.ranges * np.cos(self.angles)
         points[:, 1] = self.ranges * np.sin(self.angles)
-        in_max_range = self.ranges < 2
-        in_min_range = self.ranges > 0.1
-        points = points[np.logical_and(in_max_range, in_min_range)]
+        if points_min is not None:
+            points = points[points > points_min]
+        if points_max is not None:
+            points = points[points < points_max]
 
         return -points
 
@@ -150,7 +151,7 @@ class LaserScan():
                                           return_counts=True)
         grid[unique_values[:, 2], unique_values[:, 1],
              unique_values[:, 0]] = counts + 1e-5
-        
+
         res_grid = grid / grid.sum(axis=0)
         res_grid = res_grid.transpose(1, 2, 0)
 
@@ -161,12 +162,27 @@ class MapWrapper():
 
     def __init__(self, cells: np.ndarray, origin: np.ndarray,
                  resolution: float):
+        assert isinstance(cells, np.ndarray), "Cells must be a numpy array"
+
         # cells is a 2D array of 0, 1, or 2
         # 0 unknown
         # 1 is free
         # 2 is occupied
         self.cells = cells
+
+        # If origin is a list of len 2, convert to numpy array
+        if type(origin) == list and len(origin) == 2:
+            origin = np.array(origin)
+        # check that origin is a (2,) array
+        assert isinstance(
+            origin,
+            np.ndarray), f"Origin must be a numpy array, got {type(origin)}"
+        assert origin.shape == (2, ), "Origin must be a 2D array"
         self.origin = origin
+
+        # check that resolution is a number
+        assert isinstance(resolution, (int, float)), \
+            "Resolution must be a number"
         self.resolution = resolution
 
         assert self.cells.ndim == 2, "Cells must be 2D array"
@@ -189,8 +205,8 @@ class MapWrapper():
         scaled_center = unscaled_center / self.resolution
         return np.floor(scaled_center).astype(int)
 
-    def _map_to_world(self, map: np.ndarray) -> np.ndarray:
-        return map * self.resolution + self.origin
+    def _map_to_world(self, map_frame: np.ndarray) -> np.ndarray:
+        return map_frame * self.resolution + self.origin
 
     def place_pose_laser(self, pose: SE2, scan: LaserScan) -> 'MapWrapper':
         global_center = pose.center()
@@ -203,6 +219,90 @@ class MapWrapper():
         modified_cells[map_center[0], map_center[1]] = 10
         modified_cells[map_points[:, 0], map_points[:, 1]] = 5
         return MapWrapper(modified_cells, self.origin, self.resolution)
+
+    def make_laser_scan(self, x: int, y: int, theta: float, max_range: float,
+                        fov_degrees: float, num_scans: int) -> LaserScan:
+        """Returns a list of points that are hit by the ray trace.
+        """
+        assert isinstance(x, (int, np.int64)), f"x must be int, got {type(x)}"
+        assert isinstance(y, (int, np.int64)), f"y must be int, got {type(y)}"
+        assert isinstance(
+            theta, (float, int)), f"theta must be float, got {type(theta)}"
+        assert isinstance(
+            max_range,
+            (float, int)), f"max_range must be float, got {type(max_range)}"
+        assert isinstance(
+            fov_degrees,
+            (float, int)), f"fov_degres must be float, got {fov_degrees}"
+        assert isinstance(num_scans,
+                          int), f"num_scans must be int, got {num_scans}"
+
+        # The x, y coordinates must be on the map
+        assert x >= 0 and x < self.cells.shape[
+            0], f"x must be in range [0, {self.cells.shape[0] - 1}], got {x}"
+        assert y >= 0 and y < self.cells.shape[
+            1], f"y must be in range [0, {self.cells.shape[1] - 1}], got {y}"
+
+        # The x, y coordinates must be free
+        assert self.cells[
+            x,
+            y] == 1, f"cells[{x}, {y}] must be free (1), got {self.cells[x, y]}"
+
+        # The theta must be in radians range [-pi, pi]
+        assert theta >= -np.pi and theta <= np.pi, f"theta must be in range [-pi, pi], got {theta}"
+
+        fov_radians = np.deg2rad(fov_degrees)
+        # Iterate over each angle in the global frame.
+        # For each angle, we will ray trace until we hit an occupied cell or the max range.
+        angles = np.linspace(theta - fov_radians / 2, theta + fov_radians / 2,
+                             num_scans)
+        ranges = np.zeros(num_scans)
+        for i, angle in enumerate(angles):
+            plt.imshow(self.cells.T)
+            plt.plot(x, y, 'bo')
+            # plt.arrow(x,
+            #           y,
+            #           np.cos(angle) * ranges[i] / self.resolution,
+            #           np.sin(angle) * ranges[i] / self.resolution,
+            #           color='green')
+            # Ray trace until we hit an occupied cell or the max range
+            ranges[i] = self._ray_trace(x, y, angle, max_range)
+
+        # Laser scan in robot frame for the angles
+        return LaserScan(ranges, angles - theta)
+
+    def _ray_trace(self, x: int, y: int, theta: float,
+                   max_range: float) -> float:
+        # We're going to use a meme implementation:
+        # 1) use PIL to draw a white line on a black image from the robot to the max range.
+        # 2) convert the image to a numpy array
+        # 3) use the non-black pixels as a selection mask
+        # 4) return the indices of the non-black pixels
+        # 5) compute the distances between these indices and the robot
+        # 6) return the minimum distance
+        start_point = (x, y)
+        end_point = (x + np.cos(theta) * max_range / self.resolution,
+                     y + np.sin(theta) * max_range / self.resolution)
+        image = Image.new('L', (self.cells.shape[0], self.cells.shape[1]))
+        draw = ImageDraw.Draw(image)
+        draw.line([start_point, end_point], fill=255, width=2)
+        image = np.array(image)
+        # plt.imshow(image)
+        # plt.colorbar()
+        
+        is_line_mask = image > 0
+        is_occupied_mask = self.cells == 2
+
+        is_line_and_occupied = is_line_mask.T & is_occupied_mask
+
+        is_line_indices = np.transpose(np.where(is_line_and_occupied))
+        # plt.scatter(is_line_indices[:,0], is_line_indices[:, 1], color='orange')
+        is_line_deltas = is_line_indices - np.array([x, y])[None, :]
+        is_line_distances = np.linalg.norm(is_line_deltas, axis=1)
+        # plt.show()
+        if len(is_line_distances) == 0:
+            return max_range
+        return (np.min(is_line_distances) + 1) * self.resolution
 
     def extract_region(self,
                        global_pose: SE2,
