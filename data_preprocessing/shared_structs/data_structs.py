@@ -50,7 +50,7 @@ class LaserScan():
         if points_max is not None:
             points = points[points < points_max]
 
-        return -points
+        return points
 
     def to_global(self, pose: SE2) -> np.ndarray:
         points = self.to_points()
@@ -60,8 +60,8 @@ class LaserScan():
             return np.array([[np.cos(theta), -np.sin(theta)],
                              [np.sin(theta), np.cos(theta)]])
 
-        rotation_matrix = make_rotation_matrix(-pose.theta + np.pi)
-        points = np.matmul(points, rotation_matrix)
+        rotation_matrix = make_rotation_matrix(pose.theta)
+        points = np.matmul(rotation_matrix, points.T).T
         # Translate the points
         points += pose.center()
         return points
@@ -154,6 +154,9 @@ class LaserScan():
 
         res_grid = grid / grid.sum(axis=0)
         res_grid = res_grid.transpose(1, 2, 0)
+        
+        # Reflect along the x axis
+        res_grid = np.flip(res_grid, axis=1)
 
         return res_grid.astype(np.float32)
 
@@ -220,8 +223,14 @@ class MapWrapper():
         modified_cells[map_points[:, 0], map_points[:, 1]] = 5
         return MapWrapper(modified_cells, self.origin, self.resolution)
 
-    def make_laser_scan(self, x: int, y: int, theta: float, max_range: float,
-                        fov_degrees: float, num_scans: int) -> LaserScan:
+    def make_laser_scan(self,
+                        x: int,
+                        y: int,
+                        theta: float,
+                        max_range: float,
+                        fov_degrees: float,
+                        num_scans: int,
+                        visualize_steps: bool = False) -> LaserScan:
         """Returns a list of points that are hit by the ray trace.
         """
         assert isinstance(x, (int, np.int64)), f"x must be int, got {type(x)}"
@@ -254,22 +263,40 @@ class MapWrapper():
         fov_radians = np.deg2rad(fov_degrees)
         # Iterate over each angle in the global frame.
         # For each angle, we will ray trace until we hit an occupied cell or the max range.
-        angles = np.linspace(theta - fov_radians / 2, theta + fov_radians / 2,
-                             num_scans)
-        ranges = np.zeros(num_scans)
-        for i, angle in enumerate(angles):
+        global_frame_angles = np.linspace(theta - fov_radians / 2,
+                                          theta + fov_radians / 2, num_scans)
+        ranges = np.array([
+            self._ray_trace(x, y, global_angle, max_range)
+            for global_angle in global_frame_angles
+        ])
+        assert (ranges <= max_range).all(), f"ranges must be less than max_range"
+        if visualize_steps:
+            plt.title(f"Visualize ray traces for {x}, {y}, {theta}")
             plt.imshow(self.cells.T)
             plt.plot(x, y, 'bo')
-            # plt.arrow(x,
-            #           y,
-            #           np.cos(angle) * ranges[i] / self.resolution,
-            #           np.sin(angle) * ranges[i] / self.resolution,
-            #           color='green')
-            # Ray trace until we hit an occupied cell or the max range
-            ranges[i] = self._ray_trace(x, y, angle, max_range)
+            # Plot the robot heading with an arrow
+            plt.arrow(x,
+                      y,
+                      np.cos(theta) * 20,
+                      np.sin(theta) * 20,
+                      color='blue',
+                      head_width=1,
+                      head_length=1)
+            cmap = plt.get_cmap('bone')
+            for idx, (range,
+                      angle) in enumerate(zip(ranges, global_frame_angles)):
+                # Ray trace until we hit an occupied cell or the max range
+                color = cmap(idx / len(ranges))
+                plt.arrow(x,
+                          y,
+                          np.cos(angle) * range / self.resolution,
+                          np.sin(angle) * range / self.resolution,
+                          color=color)
 
+            plt.show()
+        local_frame_angles = global_frame_angles - theta
         # Laser scan in robot frame for the angles
-        return LaserScan(ranges, angles - theta)
+        return LaserScan(ranges, local_frame_angles)
 
     def _ray_trace(self, x: int, y: int, theta: float,
                    max_range: float) -> float:
@@ -289,7 +316,7 @@ class MapWrapper():
         image = np.array(image)
         # plt.imshow(image)
         # plt.colorbar()
-        
+
         is_line_mask = image > 0
         is_occupied_mask = self.cells == 2
 
@@ -302,7 +329,8 @@ class MapWrapper():
         # plt.show()
         if len(is_line_distances) == 0:
             return max_range
-        return (np.min(is_line_distances) + 1) * self.resolution
+        ray_trace_distance = (np.min(is_line_distances) + 1) * self.resolution
+        return min(ray_trace_distance, max_range)
 
     def extract_region(self,
                        global_pose: SE2,
@@ -310,7 +338,7 @@ class MapWrapper():
                        plot_images: bool = False):
         """Cuts out the label from the ground truth map and returns the proper channels.
         """
-        ground_truth_occ_map = self.cells
+        ground_truth_occ_map = self.cells.T
         robot_position = self._world_to_map(global_pose.center())
         robot_angle = int(global_pose.theta_deg())
         if plot_images:
@@ -318,11 +346,11 @@ class MapWrapper():
             rect = ((int(robot_position[0]), int(robot_position[1])),
                     (robot_frame_size[0], robot_frame_size[1]), robot_angle)
             box = cv2.boxPoints(rect).astype(np.int0)
-            cv2.drawContours(ground_truth_occ_map, [box], 0, (255, 0, 0), 3)
+            # cv2.drawContours(ground_truth_occ_map, [box], 0, (255, 0, 0), 3)
         # Unknown space is 0, free space is 2, occupied space is 1.
         label_map = np.zeros_like(ground_truth_occ_map)
-        label_map[ground_truth_occ_map == 1] = 2
-        label_map[ground_truth_occ_map == 2] = 1
+        label_map[ground_truth_occ_map == 1] = 1
+        label_map[ground_truth_occ_map == 2] = 2
         label_map = label_map.astype(np.uint8)
 
         padding_size = int(np.sqrt(2) * max(robot_frame_size))
@@ -333,7 +361,7 @@ class MapWrapper():
                                      int(robot_position[1]) + padding_size),
                                     robot_angle + 90, 1)
         img_rot = cv2.warpAffine(label_map,
-                                 M, (label_map.shape[0], label_map.shape[1]),
+                                 M, (label_map.shape[1], label_map.shape[0]),
                                  flags=cv2.INTER_LINEAR)
 
         cut_img = img_rot[robot_position[1] - int(robot_frame_size[1] / 2) +
@@ -344,19 +372,41 @@ class MapWrapper():
                           int(robot_frame_size[0] / 2) + padding_size]
 
         if plot_images:
-            _, axs = plt.subplots(3, 1, figsize=(4, 10))
+            _, axs = plt.subplots(4, 1, figsize=(4, 20))
             axs[0].imshow(ground_truth_occ_map)
+            axs[0].scatter(robot_position[0], robot_position[1], c='r')
+            axs[0].arrow(robot_position[0],
+                         robot_position[1],
+                         np.cos(global_pose.theta) * 30,
+                         np.sin(global_pose.theta) * 30,
+                         head_width=1,
+                         color='r')
+
             axs[0].set_title('Ground truth map')
             axs[0].set_aspect('equal')
-            axs[1].imshow(img_rot)
+
+            axs[1].imshow(label_map)
+            axs[1].scatter(robot_position[0] + padding_size,
+                           robot_position[1] + padding_size,
+                           c='r')
+            axs[1].arrow(robot_position[0] + padding_size,
+                         robot_position[1] + padding_size,
+                         np.cos(global_pose.theta) * 30,
+                         np.sin(global_pose.theta) * 30,
+                         head_width=1,
+                         color='r')
             axs[1].set_aspect('equal')
-            axs[1].set_title('Rotated map')
-            axs[2].imshow(cut_img)
-            axs[2].set_title('Cut out map')
+            axs[1].set_title('Padded GT map')
+
+            axs[2].imshow(img_rot)
             axs[2].set_aspect('equal')
-            axs[2].scatter(robot_frame_size[0] // 2 - 1,
+            axs[2].set_title('Rotated map')
+
+            axs[3].imshow(cut_img)
+            axs[3].set_title('Cut out map')
+            axs[3].set_aspect('equal')
+            axs[3].scatter(robot_frame_size[0] // 2 - 1,
                            robot_frame_size[1] // 2 - 1,
                            c='r')
             plt.show()
-
         return cut_img
