@@ -49,9 +49,18 @@ class SequenceDir():
             load_pickle(f) for f in self.sequence_files
         ]
 
+        def _laser_serializable_to_standard(
+                scan: SerializableLaserScan) -> LaserScan:
+            angles = -scan.angles
+            ranges = scan.ranges
+            return LaserScan(ranges, angles)
+
+        def _pose_serializable_to_standard(pose: SerializablePose) -> SE2:
+            return SE2(pose.x, pose.y, pose.theta)
+
         # Convert to standard types
-        self.sequence = [(LaserScan.from_serializable(scan),
-                          SE2.from_serializable(pose))
+        self.sequence = [(_laser_serializable_to_standard(scan),
+                          _pose_serializable_to_standard(pose))
                          for scan, pose in self.sequence]
 
     def __len__(self):

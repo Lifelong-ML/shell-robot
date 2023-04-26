@@ -51,6 +51,8 @@ class SequenceDir():
     def __init__(self, data_path: Path):
         self.data_path = Path(data_path)
 
+        self.map = self._load_map()
+
         # Extract the `.pkl` files
         self.sequence_files = sorted(e for e in self.data_path.glob('*.pkl')
                                      if e.name != 'map.pkl')
@@ -59,19 +61,42 @@ class SequenceDir():
             load_pickle(f) for f in self.sequence_files
         ]
 
-        # Convert to standard types
-        self.sequence = [(LaserScan.from_serializable(scan),
-                          SE2.from_serializable(pose))
-                         for scan, pose in self.sequence]
+        def _laser_serializable_to_standard(
+                scan: SerializableLaserScan) -> LaserScan:
+            angles = -scan.angles
+            ranges = np.array(scan.ranges)
+            max_distance = 3
+            min_distance = 0.1
+            valid_ranges = np.logical_and(ranges > min_distance,
+                                          ranges < max_distance)
+            ranges = ranges[valid_ranges]
+            angles = angles[valid_ranges]
+            return LaserScan(ranges, angles)
 
-        self.map = self._load_map()
+        def _pose_serializable_to_standard(pose: SerializablePose) -> SE2:
+            return SE2(pose.x, pose.y, pose.theta)
+
+        # Convert to standard types
+        self.sequence: List[Tuple[LaserScan, SE2]] = [
+            (_laser_serializable_to_standard(scan),
+             _pose_serializable_to_standard(pose))
+            for scan, pose in self.sequence
+        ]
 
     def _load_map(self) -> MapWrapper:
         """
         Load the map from the map file.
         """
-        map_img_path = self.data_path / 'map.pgm'
-        map_metadata_path = self.data_path / 'map.yaml'
+        pgm_files = [
+            e for e in self.data_path.glob('*.pgm')
+            if not e.stem.endswith('_gt')
+        ]
+
+        assert len(
+            pgm_files) == 1, f'Expected 1 pgm file, got {len(pgm_files)}'
+
+        map_img_path = pgm_files[0]
+        map_metadata_path = self.data_path / (map_img_path.stem + '.yaml')
         map_img = cv2.imread(str(map_img_path), cv2.IMREAD_GRAYSCALE)
         # load yaml metadata
         with open(map_metadata_path, 'r') as f:
@@ -85,9 +110,10 @@ class SequenceDir():
         map_img = map_img.astype(np.int8)
 
         cells = map_img
+        cells = np.flip(cells.T, axis=1)
 
         resolution = map_metadata['resolution']
-        origin = -np.array(map_metadata['origin'][:2])
+        origin = np.array(map_metadata['origin'][:2]) * resolution
 
         return MapWrapper(cells=cells, resolution=resolution, origin=origin)
 
@@ -96,9 +122,53 @@ class SequenceDir():
 
     def __getitem__(self, index) -> Tuple[LaserScan, SE2]:
         laser_scan, pose = self.sequence[index]
+
+        # plt.imshow(self.map.cells.T)
+        # map_pose = self.map._world_to_map(pose)
+        # plt.scatter(map_pose.x, map_pose.y, c='b', s=10)
+        # plt.arrow(map_pose.x,
+        #           map_pose.y,
+        #           np.cos(pose.theta) * 30,
+        #           np.sin(pose.theta) * 30,
+        #           color='b')
+        # plt.show()
+
         ego_grid_occ = laser_scan.ego_occupancy(self.map.resolution)
+        ego_grid_occ = np.flip(ego_grid_occ, axis=1)
         ground_truth_label = self.map.extract_region(pose)
         return ego_grid_occ, ground_truth_label
+
+    def _visualize_sequence_global_frame(self):
+        plt.title('Global frame')
+        for idx, (laser_scan, pose) in enumerate(self.sequence):
+            # Plot global pose
+            plt.scatter(pose.x, pose.y, c='b', s=100)
+            plt.arrow(pose.x,
+                      pose.y,
+                      np.cos(pose.theta) * 0.1,
+                      np.sin(pose.theta) * 0.1,
+                      color='b')
+            global_points = laser_scan.to_global(pose)
+            plt.scatter(global_points[:, 0], global_points[:, 1], c='r', s=1)
+        plt.show()
+
+    def _visualize_sequence_map_frame(self):
+        plt.title(f'Map frame')
+        plt.imshow(self.map.cells.T, cmap='gray')
+        for idx, (laser_scan, pose) in enumerate(self.sequence):
+
+            map_pose = self.map._world_to_map(pose)
+            # Plot global pose
+            plt.scatter(map_pose.x, map_pose.y, c='b', s=100)
+            plt.arrow(map_pose.x,
+                      map_pose.y,
+                      np.cos(map_pose.theta) * 0.1,
+                      np.sin(map_pose.theta) * 0.1,
+                      color='b')
+            global_points = laser_scan.to_global(pose)
+            map_points = self.map._world_to_map(global_points)
+            plt.scatter(map_points[:, 0], map_points[:, 1], c='r', s=1)
+        plt.show()
 
     def _visualize_input_outputs(self):
 
@@ -200,6 +270,10 @@ class SequenceDir():
 # Load data
 data_dir = SequenceDir(input_path)
 
+data_dir._visualize_sequence_global_frame()
+data_dir._visualize_sequence_map_frame()
+data_dir._visualize_input_outputs()
+
 for idx in range(len(data_dir)):
     input, target = data_dir[idx]
     # Check shapes are the same
@@ -218,13 +292,12 @@ for idx in range(len(data_dir)):
         f"Input dtype {input.dtype} is not float32"
     assert target.dtype == np.uint8, \
         f"Target dtype {target.dtype} is not uint8"
-    
-    # Plot the input and target using matplotlib
+
+    # # Plot the input and target using matplotlib
     # fig, ax = plt.subplots(2, 1, figsize=(5, 10))
     # ax[0].imshow(input)
     # fig.colorbar(ax[1].imshow(target))
     # plt.show()
-
 
     save_pickle(output_path / f"input_target_{idx:06d}.pkl", {
         'input': input,

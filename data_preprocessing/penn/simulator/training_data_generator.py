@@ -69,11 +69,6 @@ def random_map_frame_positions(map: MapWrapper) -> Tuple[int, int, float]:
     obstacle_inflated_cells = cv2.GaussianBlur(
         obstacle_inflated_cells.astype(np.float32), (45, 45), 3)
 
-    # # Plot the blurred map
-    # plt.imshow(obstacle_inflated_cells.T, cmap='gray')
-    # plt.colorbar()
-    # plt.show()
-
     # Get the indices of the free space
     free_space_indices = np.where(obstacle_inflated_cells == 1)
     # Choose a random index
@@ -99,8 +94,8 @@ def make_laser_scan_pose(position: Tuple[int, int, float],
                                      y,
                                      theta,
                                      max_range=3.5,
-                                     fov_degrees=90,
-                                     num_scans=10,
+                                     fov_degrees=220,
+                                     num_scans=22,
                                      visualize_steps=False)
     global_position = map._map_to_world(map_position)
     global_se2 = SE2(global_position[0], global_position[1], theta)
@@ -163,3 +158,15 @@ for idx, (laser_scan, pose) in enumerate(scan_pose):
 
 if args.visualize:
     plot_poses(scan_pose, map)
+    for idx, (laser_scan, pose) in enumerate(scan_pose):
+        input = laser_scan.ego_occupancy(map.resolution)
+        target = map.extract_region(pose)
+        plt.subplot(1, 2, 1)
+        plt.title("Input")
+        plt.imshow(input)
+        plt.subplot(1, 2, 2)
+        plt.title("Target")
+        plt.imshow(target)
+        plt.show()
+
+

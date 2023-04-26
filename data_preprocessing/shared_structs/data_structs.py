@@ -24,13 +24,6 @@ class SE2():
     def theta_deg(self) -> float:
         return np.rad2deg(self.theta)
 
-    @staticmethod
-    def from_serializable(serializable_pose):
-        x = serializable_pose.x
-        y = serializable_pose.y
-        theta = serializable_pose.theta
-        return SE2(x, y, theta)
-
     def __repr__(self) -> str:
         return f'({self.x}, {self.y}, {self.theta})'
 
@@ -65,12 +58,6 @@ class LaserScan():
         # Translate the points
         points += pose.center()
         return points
-
-    @staticmethod
-    def from_serializable(serializable_scan):
-        ranges = np.array(serializable_scan.ranges)
-        angles = serializable_scan.angles
-        return LaserScan(ranges, angles)
 
     def ego_occupancy(self, map_grid_size: float, grid_dim=ROBOT_FRAME_SIZE):
 
@@ -154,7 +141,7 @@ class LaserScan():
 
         res_grid = grid / grid.sum(axis=0)
         res_grid = res_grid.transpose(1, 2, 0)
-        
+
         # Reflect along the x axis
         res_grid = np.flip(res_grid, axis=1)
 
@@ -206,7 +193,10 @@ class MapWrapper():
         else:
             raise ValueError("World must be 1D or 2D array")
         scaled_center = unscaled_center / self.resolution
-        return np.floor(scaled_center).astype(int)
+        assert np.isfinite(
+            scaled_center).all(), "World coordinates must be finite"
+        res = np.floor(scaled_center).astype(int)
+        return res
 
     def _map_to_world(self, map_frame: np.ndarray) -> np.ndarray:
         return map_frame * self.resolution + self.origin
@@ -269,7 +259,8 @@ class MapWrapper():
             self._ray_trace(x, y, global_angle, max_range)
             for global_angle in global_frame_angles
         ])
-        assert (ranges <= max_range).all(), f"ranges must be less than max_range"
+        assert (ranges <=
+                max_range).all(), f"ranges must be less than max_range"
         if visualize_steps:
             plt.title(f"Visualize ray traces for {x}, {y}, {theta}")
             plt.imshow(self.cells.T)
