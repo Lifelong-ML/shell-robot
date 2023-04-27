@@ -24,6 +24,7 @@ from functools import partial
 parser = argparse.ArgumentParser()
 parser.add_argument('raw_input_path', type=Path, help='Data path.')
 parser.add_argument('output_path', type=Path, help='Output path.')
+parser.add_argument('--visualize', action='store_true', help='Visualize.')
 args = parser.parse_args()
 
 input_path = args.raw_input_path
@@ -297,9 +298,10 @@ class SequenceDir():
 # Load data
 data_dir = SequenceDir(input_path)
 
-data_dir._visualize_sequence_global_frame()
-data_dir._visualize_sequence_map_frame()
-data_dir._visualize_input_outputs()
+if args.visualize:
+    data_dir._visualize_sequence_global_frame()
+    data_dir._visualize_sequence_map_frame()
+    data_dir._visualize_input_outputs()
 
 for idx in range(len(data_dir)):
     input, target = data_dir[idx]
