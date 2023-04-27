@@ -11,6 +11,7 @@ import matplotlib.pyplot as plt
 import yaml
 
 from pathlib import Path
+from demo_ros.robot_messaging.serializable_map import SerializableMap
 from demo_ros.robot_messaging.serializable_pose import SerializablePose
 from demo_ros.robot_messaging.serializable_laser_scan import SerializableLaserScan
 
@@ -51,7 +52,8 @@ class SequenceDir():
     def __init__(self, data_path: Path):
         self.data_path = Path(data_path)
 
-        self.map = self._load_map()
+        # self.map = self._load_map()
+        self.map = self._load_pkl_map()
 
         # Extract the `.pkl` files
         self.sequence_files = sorted(e for e in self.data_path.glob('*.pkl')
@@ -83,10 +85,35 @@ class SequenceDir():
             for scan, pose in self.sequence
         ]
 
+    def _load_pkl_map(self) -> MapWrapper:
+        map_pkl_path = self.data_path / 'map.pkl'
+        map_pkl: SerializableMap = load_pickle(map_pkl_path)
+        cells = map_pkl.grid.T
+        # Input:
+        # -1 unknown
+        # 0 is free
+        # 100 is occupied
+
+        # Correct output:
+        # 0 unknown
+        # 1 is free
+        # 2 is occupied
+        cells[cells == 0] = 1
+        cells[cells == 100] = 2
+        cells[cells == -1] = 0
+        resolution = map_pkl.resolution
+        origin = np.array([0, 0])
+        # plt.title(f'Map w/ resolution {resolution}')
+        # plt.imshow(cells.T)
+        # plt.colorbar()
+        # plt.show()
+        return MapWrapper(cells=cells, resolution=resolution, origin=origin)
+
     def _load_map(self) -> MapWrapper:
         """
         Load the map from the map file.
         """
+
         pgm_files = [
             e for e in self.data_path.glob('*.pgm')
             if not e.stem.endswith('_gt')
