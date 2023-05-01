@@ -14,7 +14,7 @@ class ResNetUNet(nn.Module):
     def __init__(self, n_channel_in, n_class_out):
         super().__init__()
 
-        self.base_model = models.resnet18(pretrained=True)
+        self.base_model = models.resnet18(weights='ResNet18_Weights.IMAGENET1K_V1')
         self.base_model.conv1 = nn.Conv2d(n_channel_in, 64, kernel_size=7, stride=2, padding=3,bias=False)
         self.base_layers = list(self.base_model.children())
 
