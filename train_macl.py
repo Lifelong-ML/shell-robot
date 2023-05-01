@@ -89,18 +89,23 @@ for task_set_idx in range(args.num_tasks):
     for agent in agents:
         agent.load_weights(average_weights)
 
-    prev_task_performances = {}
+    agent_prev_task_performances = {
+        agent_idx: {}
+        for agent_idx in range(args.num_agents)
+    }
     # Test averaged weights on all previous tasks, and the current task
-    for prev_task_idx in range(task_set_idx + 1):
-        # Because all agents share the same model, we only need to evaluate one of them.
-        prev_task_perf = agents[0].evaluate(prev_task_idx)
-        prev_task_performances[prev_task_idx] = prev_task_perf
+    for prev_task_idx in tqdm.tqdm(range(task_set_idx + 1),
+                                   desc="Task Set Index"):
+        for agent_idx in range(args.num_agents):
+            agent_prev_task_perf = agents[agent_idx].evaluate(prev_task_idx)
+            agent_prev_task_performances[agent_idx][
+                prev_task_idx] = agent_prev_task_perf
 
     torch.save(
         agents[0].model.state_dict(), checkpoint_dir /
         f"average_model_weights_after_task_set_idx_{task_set_idx:03d}.pth")
     torch.save(
-        prev_task_performances, checkpoint_dir /
+        agent_prev_task_performances, checkpoint_dir /
         f"perf_metrics_after_task_set_idx_{task_set_idx:03d}.pth")
 
     print(f"[info] Finishing task set idx {task_set_idx}")

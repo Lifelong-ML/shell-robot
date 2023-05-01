@@ -29,6 +29,8 @@ RUN pip install tensorboard
 RUN pip install pytorch-lightning==1.9.4
 RUN pip install nntime
 
+COPY resnet18-f37072fd.pth /root/.cache/torch/hub/checkpoints/resnet18-f37072fd.pth
+
 ENV PYTHONPATH=/project:${PYTHONPATH}
 ENV HISTFILESIZE=
 ENV HISTSIZE=
