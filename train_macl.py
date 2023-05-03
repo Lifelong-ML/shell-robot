@@ -78,20 +78,20 @@ agents = [
     for agent_idx, task_lst in enumerate(task_matrix)
 ]
 
-for task_set_idx in range(args.num_tasks):
+for train_task_set_idx in range(args.num_tasks):
 
     # Train each model separately
     trained_weights = []
     for agent_idx, agent in enumerate(agents):
-        agent_train_losses = agent.learn(task_set_idx)
+        agent_train_losses = agent.learn(train_task_set_idx)
         trained_weights.append(agent.get_weights().data)
         torch.save(
             agent.model.state_dict(), checkpoint_dir /
-            f"agent_{agent_idx:03d}_model_weights_after_task_set_idx_{task_set_idx:03d}.pth"
+            f"agent_{agent_idx:03d}_model_weights_after_task_set_idx_{train_task_set_idx:03d}.pth"
         )
         save_pickle(
             agent_train_losses, checkpoint_dir /
-            f"agent_{agent_idx:03d}_train_losses_for_task_set_idx_{task_set_idx:03d}.pkl"
+            f"agent_{agent_idx:03d}_train_losses_for_task_set_idx_{train_task_set_idx:03d}.pkl"
         )
 
     # Average weights
@@ -103,19 +103,20 @@ for task_set_idx in range(args.num_tasks):
         agent_idx: {}
         for agent_idx in range(args.num_agents)
     }
-    # Test averaged weights on all previous tasks, and the current task
-    for prev_task_idx in tqdm.tqdm(range(task_set_idx + 1),
+    # Test averaged weights on *all* tasks, including tasks it has yet to train on.
+    for eval_task_idx in tqdm.tqdm(range(args.num_tasks),
                                    desc="Task Set Index"):
         for agent_idx in range(args.num_agents):
-            agent_prev_task_perf = agents[agent_idx].evaluate(prev_task_idx)
+            agent_prev_task_perf = agents[agent_idx].evaluate(eval_task_idx)
             agent_prev_task_performances[agent_idx][
-                prev_task_idx] = agent_prev_task_perf
+                eval_task_idx] = agent_prev_task_perf
 
     torch.save(
         agents[0].model.state_dict(), checkpoint_dir /
-        f"average_model_weights_after_task_set_idx_{task_set_idx:03d}.pth")
+        f"average_model_weights_after_task_set_idx_{train_task_set_idx:03d}.pth"
+    )
     save_pickle(
         agent_prev_task_performances, checkpoint_dir /
-        f"perf_metrics_after_task_set_idx_{task_set_idx:03d}.pkl")
+        f"perf_metrics_after_task_set_idx_{train_task_set_idx:03d}.pkl")
 
-    print(f"[info] Finishing task set idx {task_set_idx}")
+    print(f"[info] Finishing task set idx {train_task_set_idx}")
