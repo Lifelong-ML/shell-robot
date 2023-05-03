@@ -13,7 +13,7 @@ from metric import Metric
 
 class Agent:
 
-    def __init__(self, agent_idx: int, task_list: List[Path], num_epochs : int):
+    def __init__(self, agent_idx: int, task_list: List[Path], num_epochs: int):
         self.agent_idx = agent_idx
         self.task_list = task_list
         self.num_epochs = num_epochs
@@ -21,7 +21,7 @@ class Agent:
             'cuda' if torch.cuda.is_available() else 'cpu')
         self.model = ResNetUNet(3, 3).to(self.device)
 
-    def learn(self, task_idx: int):
+    def learn(self, task_idx: int) -> List[float]:
         """
         train a task
         """
@@ -40,6 +40,8 @@ class Agent:
                                                  shuffle=True)
 
         # Define the number of epochs
+
+        running_loss_list = []
 
         # Train loop
         pbar = tqdm.tqdm(range(self.num_epochs),
@@ -76,6 +78,7 @@ class Agent:
                 # Print running loss
                 running_loss += loss.item()
                 total_loss += loss.item()
+                running_loss_list.append(running_loss / len(data))
                 if i % 1000 == 999:  # Print every 1000 mini-batches
                     print(
                         f"[{epoch + 1}, {i + 1}] loss: {running_loss / 1000:.3f}"
@@ -83,6 +86,7 @@ class Agent:
                     running_loss = 0.0
             # Update tqdm bar with latest loss
             pbar.set_postfix({'loss': total_loss / len(dataloader)})
+        return running_loss_list
 
     @torch.no_grad()
     def evaluate(self, task_idx: int) -> Metric:
