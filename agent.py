@@ -7,6 +7,7 @@ from models import ResNetUNet
 import argparse
 import tqdm
 from typing import List
+import numpy as np
 
 from metric import Metric
 
@@ -101,20 +102,43 @@ class Agent:
         # Load data
         dataset = PickleLoader(data_path)
         dataloader = torch.utils.data.DataLoader(dataset,
-                                                 batch_size=2,
+                                                 batch_size=1,
                                                  shuffle=False)
 
-        total_loss = 0.0
+        pixel_accuracies = []
+        calibration_errors = []
+        losses = []
         for data in dataloader:
             inputs, targets = data['input'].to(self.device), data['target'].to(
                 self.device)
             outputs = self.model(inputs)
+
             B, C, _, _ = outputs.shape
+
+            # Flatten outputs and targets to get rid of spacial dimensions.
             outputs = outputs.reshape(B, C, -1)
             targets = targets.reshape(B, -1)
+
+            # This is an accuracy measure between 0 and 1 across all pixels.
+            correct_pixels = (outputs.argmax(dim=1) == targets).sum()
+            total_pixels = targets.numel()
+            pixel_accuracy = correct_pixels / total_pixels
+
+            # Measure calibration error by computing the average confidence of the correct class.
+            probability_of_correct_class = outputs.softmax(dim=1).gather(
+                1, targets.unsqueeze(1)).squeeze(1)
+            calibration_error = 1 - probability_of_correct_class.mean()
+
+            pixel_accuracies.append(pixel_accuracy.item())
+            calibration_errors.append(calibration_error.item())
+
+            # Compute loss
             loss = criterion(outputs, targets)
-            total_loss += loss.item()
-        return Metric(total_loss / len(dataloader), 0.0)
+            losses.append(loss.item())
+
+        return Metric(loss=np.mean(losses),
+                      pixel_average_accuracy=np.mean(pixel_accuracies),
+                      calibration_error=np.mean(calibration_errors))
 
     def get_weights(self):
         return torch.cat([p.data.view(-1) for p in self.model.parameters()],
