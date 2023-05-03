@@ -8,6 +8,7 @@ import tqdm
 from agent import Agent
 from metric import Metric
 import numpy as np
+import pickle
 
 # Get path to data from command line
 parser = argparse.ArgumentParser()
@@ -41,6 +42,11 @@ assert args.num_epochs > 0, f"num_epochs must be greater than 0. Got {args.num_e
 
 # Define device
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+
+
+def save_pickle(data, path: Path):
+    with open(path, 'wb') as f:
+        pickle.dump(data, f)
 
 
 def setup_task_matrix(num_tasks: int, num_agents: int, int_offset: int = 0):
@@ -77,11 +83,15 @@ for task_set_idx in range(args.num_tasks):
     # Train each model separately
     trained_weights = []
     for agent_idx, agent in enumerate(agents):
-        agent.learn(task_set_idx)
+        agent_train_losses = agent.learn(task_set_idx)
         trained_weights.append(agent.get_weights().data)
         torch.save(
             agent.model.state_dict(), checkpoint_dir /
             f"agent_{agent_idx:03d}_model_weights_after_task_set_idx_{task_set_idx:03d}.pth"
+        )
+        save_pickle(
+            agent_train_losses, checkpoint_dir /
+            f"agent_{agent_idx:03d}_train_losses_for_task_set_idx_{task_set_idx:03d}.pkl"
         )
 
     # Average weights
@@ -104,8 +114,8 @@ for task_set_idx in range(args.num_tasks):
     torch.save(
         agents[0].model.state_dict(), checkpoint_dir /
         f"average_model_weights_after_task_set_idx_{task_set_idx:03d}.pth")
-    torch.save(
+    save_pickle(
         agent_prev_task_performances, checkpoint_dir /
-        f"perf_metrics_after_task_set_idx_{task_set_idx:03d}.pth")
+        f"perf_metrics_after_task_set_idx_{task_set_idx:03d}.pkl")
 
     print(f"[info] Finishing task set idx {task_set_idx}")
